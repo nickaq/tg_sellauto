@@ -65,6 +65,56 @@ cp .env.example .env        # заполнить BOT_TOKEN и ADMIN_IDS
 ```
 Тесты работают без сети и ничего не отправляют в Telegram.
 
-Бот работает, пока запущен компьютер. Расписание восстанавливается из SQLite (`data/mv_auto.db`) при старте.
-Публикации, пропущенные при выключенном боте, выходят сразу после запуска; если просрочка больше недели,
+При локальном запуске бот работает, пока включён компьютер. Расписание восстанавливается из SQLite (`data/mv_auto.db`)
+при старте. Публикации, пропущенные при выключенном боте, выходят сразу после запуска; если просрочка больше недели,
 они получают статус «Ошибка публикации», а автору приходит уведомление.
+
+## Деплой на VPS (Docker)
+Подойдёт сервер на Ubuntu или Debian с 1 ГБ памяти. Домен и открытые порты не нужны: бот сам обращается к Telegram.
+
+**1. На сервере:** установите Docker и создайте ключ для доступа к приватному репозиторию.
+```bash
+curl -fsSL https://get.docker.com | sh
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+Добавьте выведенный ключ в GitHub: репозиторий → Settings → Deploy keys → Add deploy key (права на запись не нужны).
+
+**2. На сервере:** скачайте код.
+```bash
+git clone git@github.com:nickaq/tg_sellauto.git ~/tg_sellauto
+mkdir -p ~/tg_sellauto/data
+```
+
+**3. На своём компьютере:** остановите локального бота, иначе Telegram вернёт ошибку `Conflict`, и скопируйте настройки
+и базу. `SERVER_IP` замените на адрес сервера. База нужна, только если хотите сохранить историю и расписание.
+```bash
+scp .env root@SERVER_IP:~/tg_sellauto/.env
+scp data/mv_auto.db root@SERVER_IP:~/tg_sellauto/data/
+```
+
+**4. На сервере:** выдайте контейнеру права на `data/` и запустите бота.
+```bash
+cd ~/tg_sellauto
+chown -R 1000:1000 data
+chmod 600 .env
+docker compose up -d --build
+docker compose logs -f bot
+```
+В логах должна появиться строка `Бот @... запущен`. После перезагрузки сервера бот стартует сам.
+
+### Обслуживание
+Все команды выполняются в `~/tg_sellauto`.
+
+Обновить бота после `git push`:
+```bash
+git pull && docker compose up -d --build
+```
+Перезапустить после правки `.env` (одного `restart` мало, он не перечитывает `.env`):
+```bash
+docker compose up -d --force-recreate
+```
+Сделать резервную копию базы (появится в `data/backup.db`, её стоит скачивать к себе):
+```bash
+docker compose exec bot python -c "import sqlite3; s = sqlite3.connect('data/mv_auto.db'); d = sqlite3.connect('data/backup.db'); s.backup(d)"
+```
